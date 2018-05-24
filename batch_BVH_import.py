@@ -77,22 +77,27 @@ class ImportBvhDirectory(bpy.types.Operator):
         return {'FINISHED',}
     
     def load_bvh(self, file):
+        print("loading file {}".format(file))
         bvh_len = get_bvh_len(file)
         bpy.context.scene.McpEndFrame = bvh_len
         bpy.ops.mcp.load_and_retarget(filepath=file)
 
         
-    #def guess_obj_name(self):
-        #for armature in bpy.data.armatures:
-            #if len(armature.name) >= 2 and armature.name[0] in ("M", "F") and armature.name[1].isdigit():
-                #return armature.name
-        #raise RuntimeError("Não foi encontrada a armature alvo")
+    def guess_obj_name(self):
+        for armature in bpy.data.armatures:
+            if len(armature.name) >= 2 and armature.name[0] in ("M", "F") and armature.name[1].isdigit():
+                return armature.name
+        raise RuntimeError("Não foi encontrada a armature alvo")
         
     def process(self, file):
 
         old_names = set(bpy.data.actions.keys())
         self.load_bvh(file)
         new_names = set(bpy.data.actions.keys())
+        avatar_name = self.guess_obj_name()
+
+        if len(old_names) == len(new_names):
+            raise RuntimeError("Could not find new action name after import")
         action_name = (new_names - old_names).pop()
 
         new_action_name = os.path.basename(file).split(".")[0]
