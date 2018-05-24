@@ -24,10 +24,11 @@ def find_files(folder):
     return files
 
 def get_bvh_len(file_path):
-    for line in open(file_path):
-        if not line.startswith("Frames:"):
-            continue
-        n = int(line.split(" ")[-1])
+    with open(file_path) as file:
+        for line in file:
+            if not line.startswith("Frames:"):
+                continue
+            n = int(line.split(" ")[-1])
     return n
     
 
@@ -89,15 +90,24 @@ class ImportBvhDirectory(bpy.types.Operator):
     bl_label = "Batch add BVH files to actions"
     bl_options = {'REGISTER', 'UNDO'}
 
+
+
+
     def execute(self, context):
         folder = context.scene.bvh_batch_importer.path
         print(folder)
-        for file in find_files(folder):
-            try:
-                self.process(file)
-            except LoadingError:
-                print("Erro ao carregar o arquivo: {}. ".format(file), file=sys.stderr)
-                    
+        failed_files = []
+        try:
+            for file in find_files(folder):
+                try:
+                    self.process(file)
+                except (RuntimeError, LoadingError):
+                    print("Erro ao carregar o arquivo: {}. ".format(file), file=sys.stderr)
+                    failed_files.append(file)
+        finally:
+            with open(os.path.join(folder, "erros_de_importacao_BVH.txt"), "wt") as file:
+                file.write("\n".join(failed_files))
+
         return {'FINISHED',}
     
     def load_bvh(self, file):
