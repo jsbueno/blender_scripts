@@ -1,7 +1,7 @@
 import os, sys
 import bpy
 
-DEBUG = False
+DEBUG = True
 
 class LoadingError(Exception):
     pass
