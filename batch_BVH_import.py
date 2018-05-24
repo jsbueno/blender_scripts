@@ -1,5 +1,10 @@
-import os
+import os, sys
 import bpy
+
+
+class LoadingError(Exception):
+    pass
+
 
 bl_info = {
     "name": "BVH Batch Importer",
@@ -37,9 +42,25 @@ def rename_action(filename):
     action = bpy.data.actions[action_name]
     obj = bpy.data.objects["F2"]
     obj.animation_data.action = action
-            
+
     """
 
+def renameBvhRig(srcRig, filepath):
+    base = os.path.basename(filepath)
+    (filename, ext) = os.path.splitext(base)
+    print("File", filename, len(filename))
+    if len(filename) > 12:
+        words = filename.split('_')
+        if len(words) == 1:
+            words = filename.split('-')
+        name = 'Y_'
+        if len(words) > 1:
+            words = words[1:]
+        for word in words:
+            name += word
+    else:
+        name = 'Y_' + filename
+    print("Name", name)
 
 def clear_avatar_position():
     avatar = bpy.data.armatures[0].name
@@ -72,7 +93,10 @@ class ImportBvhDirectory(bpy.types.Operator):
         folder = context.scene.bvh_batch_importer.path
         print(folder)
         for file in find_files(folder):
-            self.process(file)
+            try:
+                self.process(file)
+            except LoadingError:
+                print("Erro ao carregar o arquivo: {}. ".format(file), file=sys.stderr)
                     
         return {'FINISHED',}
     
@@ -97,7 +121,7 @@ class ImportBvhDirectory(bpy.types.Operator):
         avatar_name = self.guess_obj_name()
 
         if len(old_names) == len(new_names):
-            raise RuntimeError("Could not find new action name after import")
+            raise LoadingError("Could not find new action name after import")
         action_name = (new_names - old_names).pop()
 
         new_action_name = os.path.basename(file).split(".")[0]
