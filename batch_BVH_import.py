@@ -82,11 +82,11 @@ class ImportBvhDirectory(bpy.types.Operator):
         bpy.ops.mcp.load_and_retarget(filepath=file)
 
         
-    def guess_obj_name(self):
-        for armature in bpy.data.armatures:
-            if len(armature.name) >= 2 and armature.name[0] in ("M", "F") and armature.name[1].isdigit():
-                return armature.name
-        raise RuntimeError("Não foi encontrada a armature alvo")
+    #def guess_obj_name(self):
+        #for armature in bpy.data.armatures:
+            #if len(armature.name) >= 2 and armature.name[0] in ("M", "F") and armature.name[1].isdigit():
+                #return armature.name
+        #raise RuntimeError("Não foi encontrada a armature alvo")
         
     def process(self, file):
 
@@ -95,9 +95,8 @@ class ImportBvhDirectory(bpy.types.Operator):
         new_names = set(bpy.data.actions.keys())
         action_name = (new_names - old_names).pop()
 
-
-        avatar_name = self.guess_obj_name()
-        bpy.data.actions[avatar_name + action_name].name = action_name
+        new_action_name = os.path.basename(file).split(".")[0]
+        bpy.data.actions[action_name].name = new_action_name
         
         bpy.ops.pose.select_all(action='DESELECT')
         
