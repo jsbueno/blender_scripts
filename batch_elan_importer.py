@@ -1,6 +1,7 @@
-# -*- coding: utf-8 -*-
+import os, sys
+
 import bpy
-import pympi, os
+import pympi
 
 bl_info = {
     "name": "Elan Batch Importer",
@@ -55,49 +56,6 @@ class ElanImporterSettings(bpy.types.PropertyGroup):
     )
 
 
-class ElanImporterOperator(bpy.types.Operator):
-    bl_idname = "add.start_processing"
-    bl_label = "Start Batch Processing"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        global SECOND_TO_FRAME
-        global ARMATURE_NAME
-        SECOND_TO_FRAME = 1 / bpy.context.scene.render.fps
-        ARMATURE_NAME = guess_obj_name()
-        scene = context.scene
-        folder = scene.elan_batch_importer.path
-        # print(folder)
-        for filename in os.listdir(folder):
-            # print("Looking {}.".format(filename))
-            if not filename.endswith(".eaf"):
-                continue
-            action_name = filename.rsplit(".", 1)[0].lower()
-
-            if not action_name in bpy.data.actions:
-                print("No matching action for {}.".format(filename), file=sys.stderr)
-                continue
-
-            action = bpy.data.actions[action_name]
-            obj = bpy.data.objects[ARMATURE_NAME]
-            obj.animation_data.action = action
-            path = os.path.join(folder, filename)
-            print(path)
-
-            elan_data = ElanData(filename)
-
-            for group_name in ("Mão Direita", "Mão Esquerda", "Português", "Expressão Facial"):
-                annotations = elan_data.annotations(group_name)
-                if group_name == "Português" and not annotations:
-                    annotations = [(34, 34, '1')]
-
-                print(group_name)
-                print(annotations)
-                if annotations and group_name in ("Mão Direita", "Mão Esquerda", "Expressão Facial"):
-                    for annotation in annotations:
-                        insert_keyframe(group_name, annotation)
-        return {'FINISHED'}
-
 class ElanData:
     def __init__(self, filename):
         self.eaf = pympi.Elan.Eaf(filename)
@@ -108,49 +66,142 @@ class ElanData:
             return None
         return annotations
 
+
+class ElanImporterOperator(bpy.types.Operator):
+    bl_idname = "add.start_processing"
+    bl_label = "Start Batch Processing"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        global SECOND_TO_FRAME
+        global ARMATURE_NAME
+        SECOND_TO_FRAME = bpy.context.scene.render.fps / 1000
+        ARMATURE_NAME = guess_obj_name()
+        scene = context.scene
+        folder = scene.elan_batch_importer.path
+        # print(folder)
+        for filename in os.listdir(folder):
+            # print("Looking {}.".format(filename))
+            if not filename.endswith(".eaf"):
+                continue
+            if 1:
+                path = os.path.join(folder, filename)
+                import_elan(path)
+            #except RuntimeError as error:
+                #print("Não foi possível importar '{}': {}".format(filename, error), file=sys.stderr)
+        return {'FINISHED'}
+
+
+def import_elan(filename):
+    action_name = os.path.basename(filename).rsplit(".", 1)[0].lower()
+
+    if not action_name in bpy.data.actions:
+        raise RuntimeError("No matching action {} ".format(action_name))
+
+    action = bpy.data.actions[action_name]
+    obj = bpy.data.objects[ARMATURE_NAME]
+    obj.animation_data.action = action
+
+    elan_data = ElanData(filename)
+
+    annotations = elan_data.annotations("Português")
+    if not annotations:
+        raise RuntimeError("Não há anotações na trilha 'Português'")
+
+    start_time, end_time = annotations[0][:2]
+    start_frame = int(start_time * SECOND_TO_FRAME)
+    end_frame = int(end_time * SECOND_TO_FRAME)
+
+    start_end_keyframe(start_frame, end_frame)
+
+    for group_name in ("Mão Direita", "Mão Esquerda",  "Expressão Facial"):
+        annotations = elan_data.annotations(group_name)
+
+        print(group_name)
+        print(annotations)
+
+        last_inserted_frame = 0
+        select_bone_group(group_name)
+        if annotations:
+            for annotation in annotations:
+                last_inserted_frame = insert_keyframe(group_name, annotation, last_inserted_frame, start_frame)
+        if end_frame - last_inserted_frame > 15:
+            apply_pose(group_name, value=1, frame=last_inserted_frame + 15)
+            apply_pose(group_name, value=1, frame=end_frame)
+
+
+def insert_keyframe(group_name, annotation, last_inserted_frame, start_frame):
+    f1 = (annotation[0] * SECOND_TO_FRAME) - start_frame + 1
+    f2 = (annotation[1] * SECOND_TO_FRAME) - start_frame + 1
+    if last_inserted_frame == 0:
+        apply_pose(group_name, value=1, frame=1)
+        if f1 > 15:
+            apply_pose(group_name, value=1, frame=f1 - 15)
+    elif (f1 - last_inserted_frame) >= 15:
+        if (f1 - last_inserted_frame) >= 30:
+            apply_pose(group_name, value=1, frame=last_inserted_frame + 15)
+        apply_pose(group_name, value=1, frame=f1 - 15)
+
+    apply_pose(group_name, value=int(annotation[2]), frame=f1)
+    apply_pose(group_name, value=int(annotation[2]), frame=f2)
+    return f2
+
+
 def select_bone_group(group_name):
+    obj = bpy.data.objects[ARMATURE_NAME]
     if group_name == "Mão Esquerda":
-        group_index = 0
+        group = obj.pose.bone_groups["hand.L"]
         poselib = "maos"
     elif group_name == "Mão Direita":
-        group_index = 1
+        group = obj.pose.bone_groups["hand.R"]
         poselib = "maos"
     elif group_name == "Expressão Facial":
-        group_index = 2
+        group = obj.pose.bone_groups["face"]
         poselib = "face"
     else:
         print("Unknown value for group name: {}".format(group_name))
         return
-    obj = bpy.data.objects[ARMATURE_NAME]
     bpy.ops.object.mode_set(mode='POSE')
     obj.pose_library = bpy.data.actions[poselib]
     bpy.ops.pose.select_all(action='DESELECT')
-    obj.pose.bone_groups.active_index = group_index
+    obj.pose.bone_groups.active = group
     bpy.ops.pose.group_select()
 
-def apply_pose(group_name,value):
+
+def apply_pose(group_name, value, frame):
+    bpy.context.area.type = 'VIEW_3D'
+    bpy.context.scene.frame_current = int(frame)
     bpy.ops.poselib.apply_pose(pose_index=(value - 1))
+    bpy.ops.anim.keyframe_insert_menu(type='Rotation')
 
-def insert_keyframe(group_name, annotation):
-    select_bone_group(group_name)
-    for i in range(2):
-        bpy.context.scene.frame_current = annotation[i] * SECOND_TO_FRAME
-        apply_pose(group_name, int(annotation[2]))
-        bpy.ops.anim.keyframe_insert_menu(type='Rotation')
-    bpy.ops.pose.select_all(action='DESELECT')
-    bpy.context.scene.frame_current = 1
-    return {'FINISHED'}
 
-def start_end_keyframe(annotation):
-    for group in ["Mão Direita", "Mão Esquerda"]:
-        select_bone_group(group)
-        for i in range(2):
-            bpy.context.scene.frame_current = annotation[i] * SECOND_TO_FRAME
-            apply_pose(group, 1)
-            bpy.ops.anim.keyframe_insert_menu(type='Rotation')
-        bpy.ops.pose.select_all(action='DESELECT')
-        bpy.context.scene.frame_current = 1
-    return {'FINISHED'}
+def start_end_keyframe(start_frame, end_frame):
+    print(f"Start and end frame for cut: {start_frame}, {end_frame}")
+    bpy.context.area.type = 'DOPESHEET_EDITOR'
+    obj = bpy.data.objects[ARMATURE_NAME]
+
+    bpy.ops.pose.select_all(action="SELECT")
+    # bpy.context.scene.frame_current = end_frame
+    # bpy.ops.anim.keyframe_insert_menu(type='Rotation')
+    bpy.context.scene.frame_current = end_frame + 1
+    bpy.ops.action.select_leftright(mode='RIGHT', extend=False)
+    bpy.ops.action.delete()
+
+    bpy.ops.pose.select_all(action="SELECT")
+    #bpy.context.scene.frame_current = start_frame
+    #bpy.ops.anim.keyframe_insert_menu(type='Rotation')
+    bpy.context.scene.frame_current = start_frame - 1
+    bpy.ops.action.select_leftright(mode='LEFT', extend=False)
+    bpy.ops.action.delete()
+
+    bpy.context.area.type = 'VIEW_3D'
+    bpy.ops.pose.select_all(action="SELECT")
+    bpy.context.area.type = 'DOPESHEET_EDITOR'
+    bpy.ops.action.select_column(mode='CFRA')
+    bpy.ops.action.select_all_toggle()
+    bpy.ops.action.select_all_toggle()
+    bpy.ops.transform.transform(mode='TIME_TRANSLATE', value=(-start_frame +1, 0, 0, 0))
+    bpy.context.area.type = 'VIEW_3D'
 
 
 def register():
