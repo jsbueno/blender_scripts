@@ -1,7 +1,7 @@
 import os, sys
 import bpy
 
-DEBUG = True
+DEBUG = False
 
 class LoadingError(Exception):
     pass
@@ -105,12 +105,16 @@ class ImportBvhDirectory(bpy.types.Operator):
                 else:
                     try:
                         self.process(file)
-                    except (RuntimeError, LoadingError):
+                    except (RuntimeError, LoadingError) as error:
                         print("Erro ao carregar o arquivo: {}. ".format(file), file=sys.stderr)
-                        failed_files.append(file)
+                        failed_files.append((file, str(error)))
+                    except Exception as error:
+                        print("Erro desconhecido {0} ao carregar o arquivo: {1}. ".format(error, file), file=sys.stderr)
+                        failed_files.append((file, str(error)))
+
         finally:
             with open(os.path.join(folder, "erros_de_importacao_BVH.txt"), "wt") as file:
-                file.write("\n".join(failed_files))
+                file.writelines(str(line).replace("\n", "__")  + "\n" for line in failed_files)
 
         return {'FINISHED',}
     

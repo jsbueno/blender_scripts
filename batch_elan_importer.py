@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import bpy
+import pympi, os
 
 bl_info = {
     "name": "Elan Batch Importer",
@@ -8,26 +10,17 @@ bl_info = {
 }
 
 
-import bpy
-import pympi, os
 
+# This is recalculated from the scene.render.fps value.
 SECOND_TO_FRAME = .03
+ARMATURE_NAME = "F2"
 
-class BVHPanel(bpy.types.Panel):
-    bl_category = "Finep_Dtita_M2"
-    bl_label = "BVH Batch Importer v%d.%d.%d" % bl_info["version"]
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "TOOLS"
-    bl_context = "posemode"
 
-    def draw(self, context):
-        layout = self.layout
-        object = context.object
-        scene = context.scene
-
-        layout.label(text="Folder with BVH:")
-        row = layout.row()
-
+def guess_obj_name():
+    for armature in bpy.data.armatures:
+        if len(armature.name) >= 2 and armature.name[0] in ("M", "F") and armature.name[1].isdigit():
+            return armature.name
+    raise RuntimeError("Não foi encontrada a armature alvo")
 
 
 class ElanBatchImporterPanel(bpy.types.Panel):
@@ -45,6 +38,7 @@ class ElanBatchImporterPanel(bpy.types.Panel):
         layout.label(text="Folder with Elan:")
         row = layout.row()
         row.prop(scene.elan_batch_importer, "path", text="")
+
 
         # TODO To implement the operator for import files
         row = layout.row()
@@ -67,81 +61,75 @@ class ElanImporterOperator(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        global SECOND_TO_FRAME
+        global ARMATURE_NAME
+        SECOND_TO_FRAME = 1 / bpy.context.scene.render.fps
+        ARMATURE_NAME = guess_obj_name()
         scene = context.scene
         folder = scene.elan_batch_importer.path
         # print(folder)
-        for file in os.listdir(folder):
-            # print("Looking {}.".format(file))
-            if not file.endswith(".eaf"):
+        for filename in os.listdir(folder):
+            # print("Looking {}.".format(filename))
+            if not filename.endswith(".eaf"):
                 continue
-            action_name = file.rsplit(".", 1)[0].lower()
+            action_name = filename.rsplit(".", 1)[0].lower()
 
             if not action_name in bpy.data.actions:
-                print("No matching action for {}.".format(file))
+                print("No matching action for {}.".format(filename), file=sys.stderr)
                 continue
 
             action = bpy.data.actions[action_name]
-            obj = bpy.data.objects["F2"]
+            obj = bpy.data.objects[ARMATURE_NAME]
             obj.animation_data.action = action
-            path = os.path.join(folder, file)
+            path = os.path.join(folder, filename)
             print(path)
 
-            group_name = "Mão Direita"
-            annotations = read_elan(path, group_name)
-            print("Mão direita:")
-            print(annotations)
-            if annotations:
-                for annotation in annotations:
-                    insert_keyframe(group_name, annotation)
+            elan_data = ElanData(filename)
 
-            group_name = "Mão Esquerda"
-            annotations = read_elan(path, group_name)
-            # print("Mão esquerda:")
-            # print(annotations[])
-            if annotations:
-                for annotation in annotations:
-                    insert_keyframe(group_name, annotation)
+            for group_name in ("Mão Direita", "Mão Esquerda", "Português", "Expressão Facial"):
+                annotations = elan_data.annotations(group_name)
+                if group_name == "Português" and not annotations:
+                    annotations = [(34, 34, '1')]
 
-            group_name = "Libras"
-            annotations = read_elan(path, group_name)
-            print("Libras")
-            if not annotations:
-                annotations = [(34, 34, '1')]
+                print(group_name)
+                print(annotations)
+                if annotations and group_name in ("Mão Direita", "Mão Esquerda", "Expressão Facial"):
+                    for annotation in annotations:
+                        insert_keyframe(group_name, annotation)
+        return {'FINISHED'}
 
-            for annotation in annotations:
-                start_end_keyframe(annotation)
-                print(annotation)
+class ElanData:
+    def __init__(self, filename):
+        self.eaf = pympi.Elan.Eaf(filename)
 
-
-        return{'FINISHED'}
-
-
-def read_elan(file, tier_name):
-    eaf = pympi.Elan.Eaf(file)
-    annotations = eaf.get_annotation_data_for_tier(tier_name)
-    if not annotations:
-        return
-    return annotations
+    def annotations(self, tier_name):
+        annotations = self.eaf.get_annotation_data_for_tier(tier_name)
+        if not annotations:
+            return None
+        return annotations
 
 def select_bone_group(group_name):
     if group_name == "Mão Esquerda":
         group_index = 0
+        poselib = "maos"
     elif group_name == "Mão Direita":
         group_index = 1
+        poselib = "maos"
     elif group_name == "Expressão Facial":
         group_index = 2
+        poselib = "face"
     else:
-        raise ValueError('Invalid value')
-    obj = bpy.data.objects['F2']
+        print("Unknown value for group name: {}".format(group_name))
+        return
+    obj = bpy.data.objects[ARMATURE_NAME]
     bpy.ops.object.mode_set(mode='POSE')
+    obj.pose_library = bpy.data.actions[poselib]
     bpy.ops.pose.select_all(action='DESELECT')
     obj.pose.bone_groups.active_index = group_index
     bpy.ops.pose.group_select()
-    return {'FINISHED'}
 
 def apply_pose(group_name,value):
     bpy.ops.poselib.apply_pose(pose_index=(value - 1))
-    return {'FINISHED'}
 
 def insert_keyframe(group_name, annotation):
     select_bone_group(group_name)
